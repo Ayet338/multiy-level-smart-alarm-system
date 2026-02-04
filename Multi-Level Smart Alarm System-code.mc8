@@ -1,0 +1,130 @@
+***** DeedsMcE Project File *****
+* If you read this message, you need to install the last version of Deeds! *
+FVR 3
+SYS 1
+CPU 1
+FCK 2
+ROM 4
+RAM 4
+PIA 0
+PIB 1
+PIC 2
+PID 3
+PIE 4
+PIF 5
+PIG 6
+PIH 7
+POA 0
+POB 1
+POC 2
+POD 3
+POE 4
+POF 5
+POG 6
+POH 7
+INT 007 SRC 002 PRT 000 TMD 001 TIN 019 EIN 003 
+INT 006 SRC 002 PRT 000 TMD 001 TIN 019 EIN 003 
+INT 005 SRC 002 PRT 000 TMD 001 TIN 019 EIN 003 
+INT 004 SRC 002 PRT 000 TMD 001 TIN 019 EIN 003 
+INT 003 SRC 002 PRT 000 TMD 001 TIN 019 EIN 003 
+INT 002 SRC 002 PRT 000 TMD 001 TIN 019 EIN 003 
+INT 001 SRC 002 PRT 000 TMD 001 TIN 019 EIN 003 
+INT 000 SRC 002 PRT 000 TMD 001 TIN 019 EIN 003 
+******* Project File END ********
+; =============================================================
+; Project: Multi-Level Smart Alarm System (ML-SAS)
+; Processor: DMC8 (8-bit Microcomputer)
+; -------------------------------------------------------------
+; INPUT MAPPING (Port IA):
+;   IA0: Emergency Button  |  IA1: Travel/Security Mode Switch
+;   IA7: Silent Mode       |  IA2-IA5: Security Passcode (14h)
+; OUTPUT MAPPING (Port OA):
+;   OA0: Blue (Silent)     |  OA1: Red (Emergency)
+;   OA2: Green (Safe)      |  OA3: Yellow (Travel/Security)
+;   OA7: Buzzer            |  OD: Serial ASCII Output
+; =============================================================
+
+RESET:
+        JP START             ; Jump to main initialization
+
+START:
+        ; 1. Notify external systems of 'Safe' state
+        LD   A, 47h          ; Load ASCII 'G' (Green/Good)
+        CALL SEND_SERIAL     ; Send status via Serial Handshaking
+
+        ; 2. Initialize Visual Feedback
+        LD   A, 04h          ; Set OA2 = 1 (Green LED ON)
+        OUT  (00h), A        ; Output to Port OA
+
+MAIN_LOOP:
+        ; Continuous Input Polling
+        IN   A, (00h)        ; Read current state of Port IA
+        
+        BIT  0, A            ; Check IA0 (Emergency Button)
+        JP   NZ, EMERGENCY_MODE
+        
+        BIT  1, A            ; Check IA1 (Travel/Security Mode)
+        JP   NZ, SECURITY_MODE
+        
+        ; Maintain Safe state (Green LED) if no triggers active
+        LD   A, 04h        
+        OUT  (00h), A
+        JP   MAIN_LOOP
+
+; ---------- SERIAL COMMUNICATION (Handshaking) ----------
+SEND_SERIAL:
+        PUSH AF              ; Save character to stack
+WAIT_RDY:
+        IN   A, (03h)        ; Read Status Port (ID)
+        BIT  0, A            ; Check ID0 (Ready Signal from ASTX)
+        JP   Z, WAIT_RDY     ; Wait if transmitter is busy (Polling)
+        
+        POP  AF              ; Restore character
+        OUT  (03h), A        ; Send data to Port OD (Triggers GO)
+        RET
+
+; ---------- EMERGENCY LEVEL LOGIC ----------
+EMERGENCY_MODE:
+        LD   A, 45h          ; Load ASCII 'E' (Emergency)
+        CALL SEND_SERIAL
+        
+        IN   A, (00h)        ; Check for Silent Mode preference
+        BIT  7, A            ; Test IA7
+        JP   NZ, SILENT_EMG  ; Switch to Silent Mode if active
+        
+        ; Standard Alarm: Red LED + Buzzer
+        LD   A, 82h          ; Set OA1=1 (Red), OA7=1 (Buzzer)
+        OUT  (00h), A
+        JP   WAIT_FOR_CODE
+
+SILENT_EMG:
+        ; Silent Alarm: Blue LED only (No Buzzer)
+        LD   A, 01h          ; Set OA0=1 (Blue)
+        OUT  (00h), A
+        JP   WAIT_FOR_CODE
+
+; ---------- TRAVEL / SECURITY LEVEL LOGIC ----------
+SECURITY_MODE:
+        LD   A, 53h          ; Load ASCII 'S' (Security/Travel)
+        CALL SEND_SERIAL
+        
+        ; Security Alert: Yellow LED + Buzzer
+        LD   A, 88h          ; Set OA3=1 (Yellow), OA7=1 (Buzzer)
+        OUT  (00h), A
+        JP   WAIT_FOR_CODE
+
+; ---------- PASSCODE VERIFICATION (14h) ----------
+WAIT_FOR_CODE:
+        ; 1. Ensure Trigger buttons are released first (Debounce/Lock)
+        IN   A, (00h)
+        AND  03h             ; Check IA0 and IA1
+        JP   NZ, WAIT_FOR_CODE
+        
+CHECK_AGAIN:
+        ; 2. Verify Security Passcode from IA2 to IA5
+        IN   A, (00h)        ; Read hardware switches
+        AND  3Ch             ; Mask bits 2, 3, 4, 5 (Isolate SecCODE)
+        CP   14h             ; Compare with hardcoded value 14h
+        JP   Z, START        ; If match, reset system to Safe state
+        
+        JP   CHECK_AGAIN     ; Continuous loop until correct code-
